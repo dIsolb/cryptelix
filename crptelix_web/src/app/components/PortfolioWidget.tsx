@@ -1,488 +1,409 @@
-import { useCallback, useEffect, useState } from 'react';
-import { 
-  PieChart, 
-  Pie, 
-  Cell, 
-  ResponsiveContainer, 
-  Tooltip,
-  AreaChart,
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import {
   Area,
+  AreaChart,
+  CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
   XAxis,
   YAxis,
-  CartesianGrid,
-  ReferenceDot
 } from 'recharts';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+
 import { apiFetch } from '../lib/apiClient';
 import { useTradesSynced } from '../lib/useTradesSynced';
 
-// Time period type
-type TimePeriod = '24h' | '7d' | '1m' | '3m' | '1y' | 'All';
+type MixSlice = {
+  name: string;
+  value: number;
+  color: string;
+};
 
-// Transaction type
-interface Transaction {
-  timestamp: number;
-  type: 'buy' | 'sell';
-  amount: number;
-}
+type PortfolioAsset = {
+  asset: string;
+  amount?: string;
+  value_usdt: number;
+};
 
-// Generate historical data for charts
-function generateHistoricalData(
-  currentValue: number, 
-  days: number,
-  transactions: Transaction[] = []
-): Array<{ timestamp: number; value: number; date: string }> {
-  const data = [];
-  const now = Date.now();
-  const volatility = 0.03; // 3% daily volatility
-  
-  for (let i = days; i >= 0; i--) {
-    const timestamp = now - i * 24 * 60 * 60 * 1000;
-    const randomChange = (Math.random() - 0.5) * 2 * volatility;
-    const progressFactor = (days - i) / days;
-    const trendValue = currentValue * (0.7 + progressFactor * 0.3);
-    const value = trendValue * (1 + randomChange);
-    
-    const date = new Date(timestamp);
-    const dateStr = i === 0 ? 'Now' : date.toLocaleDateString('en-US', { 
-      month: 'short', 
-      day: 'numeric' 
-    });
-    
-    data.push({
-      timestamp,
-      value: Math.round(value),
-      date: dateStr,
-    });
-  }
-  
-  return data;
-}
+type HistoryPoint = {
+  date: string;
+  total_usdt: number;
+};
 
-// Generate transactions
-function generateTransactions(days: number): Transaction[] {
-  const transactions: Transaction[] = [];
-  const now = Date.now();
-  const numTransactions = Math.floor(Math.random() * 5) + 3;
-  
-  for (let i = 0; i < numTransactions; i++) {
-    const daysAgo = Math.floor(Math.random() * days);
-    transactions.push({
-      timestamp: now - daysAgo * 24 * 60 * 60 * 1000,
-      type: Math.random() > 0.5 ? 'buy' : 'sell',
-      amount: Math.floor(Math.random() * 5000) + 1000,
-    });
-  }
-  
-  return transactions.sort((a, b) => a.timestamp - b.timestamp);
-}
+type BinancePortfolioPayload = {
+  exchange_name: string;
+  total_usdt: number;
+  assets: PortfolioAsset[];
+  captured_at: string | null;
+  history: HistoryPoint[];
+};
 
-// Mock data
-const generalDistributionData = [
-  { name: 'Exchanges', value: 65000, color: '#facc15' },
-  { name: 'Wallets', value: 45000, color: '#3b82f6' },
+type CredentialsStatus = {
+  binance_connected?: boolean;
+};
+
+type TimePeriod = '7d' | '1m' | '3m' | '1y' | 'All';
+
+const KNOWN_ASSET_COLORS: Record<string, string> = {
+  BTC: '#f7931a',
+  ETH: '#627eea',
+  SOL: '#00d4aa',
+  USDT: '#26a17b',
+  USDC: '#2775ca',
+  BNB: '#f3ba2f',
+};
+
+const FALLBACK_COLORS = [
+  '#facc15',
+  '#22c55e',
+  '#3b82f6',
+  '#a78bfa',
+  '#f97316',
+  '#14b8a6',
+  '#f43f5e',
+  '#94a3b8',
 ];
 
-const tokenAllocationData = [
-  { name: 'BTC', value: 45000, color: '#f7931a' },
-  { name: 'ETH', value: 32000, color: '#627eea' },
-  { name: 'SOL', value: 18000, color: '#00d4aa' },
-  { name: 'USDT', value: 10000, color: '#26a17b' },
-  { name: 'Others', value: 5000, color: '#6b7280' },
-];
+const TOOLTIP_STYLE = {
+  backgroundColor: '#18181b',
+  border: '1px solid #3f3f46',
+  borderRadius: '6px',
+  color: '#ffffff',
+  fontSize: '11px',
+} as const;
 
-const exchanges = [
-  {
-    id: 'binance',
-    name: 'Binance',
-    data: [
-      { name: 'BTC', value: 25000, color: '#f7931a' },
-      { name: 'ETH', value: 18000, color: '#627eea' },
-      { name: 'SOL', value: 8000, color: '#00d4aa' },
-      { name: 'USDT', value: 5000, color: '#26a17b' },
-    ],
-  },
-  {
-    id: 'coinbase',
-    name: 'Coinbase',
-    data: [
-      { name: 'BTC', value: 8000, color: '#f7931a' },
-      { name: 'ETH', value: 5000, color: '#627eea' },
-      { name: 'USDT', value: 1000, color: '#26a17b' },
-    ],
-  },
-];
+const DUST_USDT = 0.01;
+const TOP_SLICES = 7;
+const PERIODS: TimePeriod[] = ['7d', '1m', '3m', '1y', 'All'];
+const PERIOD_DAYS: Record<Exclude<TimePeriod, 'All'>, number> = {
+  '7d': 7,
+  '1m': 30,
+  '3m': 90,
+  '1y': 365,
+};
 
-const wallets = [
-  {
-    id: 'metamask',
-    name: 'MetaMask',
-    data: [
-      { name: 'ETH', value: 8000, color: '#627eea' },
-      { name: 'USDT', value: 3000, color: '#26a17b' },
-      { name: 'Others', value: 2000, color: '#6b7280' },
-    ],
-  },
-  {
-    id: 'phantom',
-    name: 'Phantom',
-    data: [
-      { name: 'SOL', value: 10000, color: '#00d4aa' },
-      { name: 'USDT', value: 1000, color: '#26a17b' },
-    ],
-  },
-  {
-    id: 'trust',
-    name: 'Trust Wallet',
-    data: [
-      { name: 'BTC', value: 12000, color: '#f7931a' },
-      { name: 'ETH', value: 1000, color: '#627eea' },
-      { name: 'Others', value: 3000, color: '#6b7280' },
-    ],
-  },
-];
-
-interface LineChartCardProps {
-  title: string;
-  currentValue: number;
+function formatUsd(n: number): string {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: n >= 100 ? 0 : 2,
+  }).format(n);
 }
 
-function LineChartCard({ title, currentValue }: LineChartCardProps) {
-  const [timePeriod, setTimePeriod] = useState<TimePeriod>('7d');
-  
-  const periodToDays: Record<TimePeriod, number> = {
-    '24h': 1,
-    '7d': 7,
-    '1m': 30,
-    '3m': 90,
-    '1y': 365,
-    'All': 730,
-  };
-  
-  const days = periodToDays[timePeriod];
-  const historicalData = generateHistoricalData(currentValue, days);
-  const transactions = generateTransactions(days);
-  
-  const periods: TimePeriod[] = ['24h', '7d', '1m', '3m', '1y', 'All'];
-  
-  // Custom tooltip
-  const CustomTooltip = ({ active, payload }: any) => {
-    if (active && payload && payload.length) {
-      const data = payload[0].payload;
-      return (
-        <div className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 shadow-xl">
-          <p className="text-xs text-gray-400 mb-1">
-            {new Date(data.timestamp).toLocaleString('en-US', {
-              month: 'short',
-              day: 'numeric',
-              year: 'numeric',
-              hour: '2-digit',
-              minute: '2-digit',
-            })}
-          </p>
-          <p className="text-sm font-semibold text-blue-400">
-            Balance: ${data.value.toLocaleString()}
-          </p>
-        </div>
-      );
-    }
-    return null;
-  };
-  
+function formatCapturedAt(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function formatAxisDate(iso: string): string {
+  const parts = iso.split('-').map(Number);
+  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) return iso;
+  return new Date(parts[0], parts[1] - 1, parts[2]).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+function colorForAsset(name: string, index: number): string {
+  return KNOWN_ASSET_COLORS[name] ?? FALLBACK_COLORS[index % FALLBACK_COLORS.length];
+}
+
+function PieSliceLabel({
+  cx,
+  cy,
+  midAngle,
+  outerRadius,
+  percent,
+  fill,
+}: {
+  cx?: number;
+  cy?: number;
+  midAngle?: number;
+  outerRadius?: number;
+  percent?: number;
+  fill?: string;
+}) {
+  if (percent == null || percent < 0.04) return null;
+  const radian = Math.PI / 180;
+  const radius = (outerRadius ?? 0) + 16;
+  const x = (cx ?? 0) + radius * Math.cos(-(midAngle ?? 0) * radian);
+  const y = (cy ?? 0) + radius * Math.sin(-(midAngle ?? 0) * radian);
   return (
-    <div className="bg-zinc-900/50 backdrop-blur-sm border border-zinc-800/50 rounded-lg p-3 hover:border-yellow-500/30 transition-all">
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="text-xs font-medium text-gray-300">{title}</h3>
-        <div className="flex items-center gap-1">
-          {periods.map((period) => (
-            <button
-              key={period}
-              onClick={() => setTimePeriod(period)}
-              className={`px-1.5 py-0.5 text-[10px] rounded transition-all ${
-                timePeriod === period
-                  ? 'bg-yellow-500/20 text-yellow-400 font-medium'
-                  : 'text-gray-500 hover:text-gray-300'
-              }`}
-            >
-              {period}
-            </button>
-          ))}
-        </div>
-      </div>
-      
-      <div style={{ height: '120px', minWidth: '200px' }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={historicalData}>
-            <defs>
-              <linearGradient id={`gradient-${title}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
-                <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
-            <XAxis 
-              dataKey="date" 
-              stroke="#52525b"
-              tick={{ fill: '#71717a', fontSize: 9 }}
-              tickLine={false}
-            />
-            <YAxis 
-              stroke="#52525b"
-              tick={{ fill: '#71717a', fontSize: 9 }}
-              tickLine={false}
-              tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
-            />
-            <Tooltip content={<CustomTooltip />} />
-            <Area 
-              type="monotone" 
-              dataKey="value" 
-              stroke="#3b82f6" 
-              strokeWidth={2}
-              fill={`url(#gradient-${title})`}
-            />
-            
-            {/* Transaction markers */}
-            {transactions.map((tx, idx) => {
-              const dataPoint = historicalData.find(
-                d => Math.abs(d.timestamp - tx.timestamp) < 24 * 60 * 60 * 1000
-              );
-              if (dataPoint) {
-                return (
-                  <ReferenceDot
-                    key={`${title}-tx-${idx}-${tx.timestamp}`}
-                    x={dataPoint.date}
-                    y={dataPoint.value}
-                    r={3}
-                    fill={tx.type === 'buy' ? '#22c55e' : '#ef4444'}
-                    stroke="#000"
-                    strokeWidth={1}
-                  />
-                );
-              }
-              return null;
-            })}
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
-      
-      {/* Transaction legend */}
-      <div className="flex items-center gap-3 mt-1 text-[10px]">
-        <div className="flex items-center gap-1">
-          <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
-          <span className="text-gray-500">Buy</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <div className="w-1.5 h-1.5 rounded-full bg-red-500" />
-          <span className="text-gray-500">Sell</span>
-        </div>
-      </div>
-    </div>
+    <text
+      x={x}
+      y={y}
+      fill={fill}
+      textAnchor={x > (cx ?? 0) ? 'start' : 'end'}
+      dominantBaseline="central"
+      fontSize={10}
+    >
+      {(percent * 100).toFixed(1)}%
+    </text>
   );
 }
 
-interface AssetCardProps {
-  title: string;
-  pieData: Array<{ name: string; value: number; color: string }>;
-  total?: number;
+function slicesFromAssets(assets: PortfolioAsset[]): MixSlice[] {
+  const ranked = assets
+    .filter((a) => a.value_usdt >= DUST_USDT)
+    .sort((a, b) => b.value_usdt - a.value_usdt);
+
+  const top = ranked.slice(0, TOP_SLICES);
+  const rest = ranked.slice(TOP_SLICES);
+  const out: MixSlice[] = top.map((a, i) => ({
+    name: a.asset,
+    value: a.value_usdt,
+    color: colorForAsset(a.asset, i),
+  }));
+  const otherSum = rest.reduce((s, a) => s + a.value_usdt, 0);
+  if (otherSum > 0) {
+    out.push({ name: 'Others', value: otherSum, color: '#6b7280' });
+  }
+  return out;
 }
 
-function AssetCard({ title, pieData, total }: AssetCardProps) {
-  const calculatedTotal = total || pieData.reduce((sum, item) => sum + item.value, 0);
-  
-  const renderCustomLabel = (entry: any) => {
-    const percent = ((entry.value / calculatedTotal) * 100).toFixed(1);
-    return `${percent}%`;
-  };
-  
-  return (
-    <div className="space-y-2">
-      {/* Pie Chart */}
-      <div className="bg-zinc-900/50 backdrop-blur-sm border border-zinc-800/50 rounded-lg p-3 hover:border-yellow-500/30 transition-all">
-        <h3 className="text-xs font-medium text-gray-300 mb-2">{title}</h3>
-        <div className="flex items-center gap-3">
-          <div className="flex-1" style={{ height: '120px', minWidth: '120px' }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={pieData}
-                  cx="50%"
-                  cy="50%"
-                  labelLine={false}
-                  label={renderCustomLabel}
-                  outerRadius={50}
-                  fill="#8884d8"
-                  dataKey="value"
-                >
-                  {pieData.map((entry, index) => (
-                    <Cell key={`${title}-cell-${index}-${entry.name}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#18181b',
-                    border: '1px solid #3f3f46',
-                    borderRadius: '6px',
-                    color: '#fff',
-                    fontSize: '11px',
-                  }}
-                  formatter={(value: number) => `$${value.toLocaleString()}`}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="space-y-1.5">
-            {pieData.map((item, index) => (
-              <div key={`${title}-legend-${index}-${item.name}`} className="flex items-center gap-1.5">
-                <div
-                  className="w-2 h-2 rounded-full"
-                  style={{ backgroundColor: item.color }}
-                />
-                <span className="text-[10px] text-gray-400">{item.name}</span>
-                <span className="text-[10px] text-gray-300 ml-auto">
-                  ${item.value.toLocaleString()}
-                </span>
-              </div>
-            ))}
-            <div className="pt-1.5 mt-1.5 border-t border-zinc-700/50">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-medium text-yellow-400">Total</span>
-                <span className="text-[10px] font-medium text-yellow-400">
-                  ${calculatedTotal.toLocaleString()}
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      
-      {/* Line Chart */}
-      <LineChartCard title={`${title} History`} currentValue={calculatedTotal} />
-    </div>
-  );
+function filterHistory(history: HistoryPoint[], period: TimePeriod): HistoryPoint[] {
+  if (period === 'All') return history;
+  const days = PERIOD_DAYS[period];
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  return history.filter((p) => {
+    const t = new Date(`${p.date}T00:00:00Z`).getTime();
+    return Number.isFinite(t) && t >= cutoff;
+  });
 }
 
 export function PortfolioWidget() {
-  const [expandedSections, setExpandedSections] = useState({
-    general: true,
-    exchanges: true,
-    wallets: true,
-  });
+  const [binanceConnected, setBinanceConnected] = useState(false);
+  const [portfolio, setPortfolio] = useState<BinancePortfolioPayload | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [period, setPeriod] = useState<TimePeriod>('All');
+  const uid = useId().replace(/:/g, '');
+  const gradientId = `pf-eq-${uid}`;
 
-  const [currentEquity, setCurrentEquity] = useState<number | null>(null);
-
-  const fetchSummary = useCallback(async () => {
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadFailed(false);
     try {
-      const response = await apiFetch('/api/v1/summary');
-      if (!response.ok) {
-        console.error('Failed to fetch financial summary', response.statusText);
+      const [statusRes, portfolioRes] = await Promise.all([
+        apiFetch('/api/v1/exchanges/credentials/status'),
+        apiFetch('/api/v1/exchanges/binance/portfolio'),
+      ]);
+
+      let connected = false;
+      if (statusRes.ok) {
+        const status = (await statusRes.json()) as CredentialsStatus;
+        connected = Boolean(status.binance_connected);
+      }
+      setBinanceConnected(connected);
+
+      if (!connected) {
+        setPortfolio(null);
         return;
       }
-      const data = await response.json();
-      if (data && typeof data.current_equity !== 'undefined') {
-        const equityNumber = Number(data.current_equity);
-        if (!Number.isNaN(equityNumber)) {
-          setCurrentEquity(equityNumber);
-        }
+
+      if (!portfolioRes.ok) {
+        setPortfolio(null);
+        setLoadFailed(true);
+        return;
       }
-    } catch (error) {
-      console.error('Error fetching financial summary', error);
+
+      const data = (await portfolioRes.json()) as BinancePortfolioPayload;
+      setPortfolio({
+        ...data,
+        assets: Array.isArray(data.assets) ? data.assets : [],
+        history: Array.isArray(data.history) ? data.history : [],
+      });
+    } catch {
+      setPortfolio(null);
+      setLoadFailed(true);
+    } finally {
+      setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void fetchSummary();
-  }, [fetchSummary]);
+    void load();
+  }, [load]);
 
-  useTradesSynced(fetchSummary);
+  useTradesSynced(load);
 
-  const toggleSection = (section: 'general' | 'exchanges' | 'wallets') => {
-    setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
-  };
+  const slices = useMemo(
+    () => slicesFromAssets(portfolio?.assets ?? []),
+    [portfolio]
+  );
+  const total =
+    slices.reduce((s, x) => s + x.value, 0) || Number(portfolio?.total_usdt ?? 0);
+  const capturedAt = formatCapturedAt(portfolio?.captured_at);
+  const history = useMemo(
+    () => filterHistory(portfolio?.history ?? [], period),
+    [portfolio, period]
+  );
 
   return (
-    <div className="space-y-4 p-3">
-      {/* Row 1: General (Overall) */}
-      <div className="space-y-2">
-        <button
-          onClick={() => toggleSection('general')}
-          className="flex items-center gap-2 w-full hover:bg-zinc-800/30 p-1 rounded transition-colors"
-        >
-          <div className="w-0.5 h-4 bg-yellow-500 rounded-full" />
-          <h2 className="text-sm font-semibold text-white">General (Overall)</h2>
-          {expandedSections.general ? (
-            <ChevronUp className="w-3 h-3 text-gray-400 ml-auto" />
-          ) : (
-            <ChevronDown className="w-3 h-3 text-gray-400 ml-auto" />
+    <div className="flex h-full min-h-0 w-full min-w-0 flex-col gap-2 overflow-y-auto p-3">
+      {loading ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center text-xs text-zinc-500">
+          Loading allocation…
+        </div>
+      ) : !binanceConnected ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-center text-xs text-zinc-500">
+          Connect Binance to see spot and futures allocation.
+        </div>
+      ) : loadFailed ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center text-xs text-zinc-500">
+          Could not load Binance allocation.
+        </div>
+      ) : slices.length === 0 && history.length === 0 ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-center text-xs text-zinc-500">
+          No valued Binance balances yet.
+        </div>
+      ) : (
+        <>
+          {slices.length > 0 && (
+            <div className="shrink-0 rounded-lg border border-zinc-800/50 bg-zinc-900/50 p-3 backdrop-blur-sm transition-all hover:border-yellow-500/30">
+              <h3 className="mb-2 text-xs font-medium text-white">Binance</h3>
+              <div className="flex items-center gap-3">
+                <div className="min-w-[140px] flex-1" style={{ height: 160 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={slices}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        outerRadius={50}
+                        labelLine={false}
+                        label={PieSliceLabel}
+                        isAnimationActive={false}
+                      >
+                        {slices.map((s) => (
+                          <Cell key={s.name} fill={s.color} stroke="#fafafa" strokeWidth={1} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        contentStyle={TOOLTIP_STYLE}
+                        itemStyle={{ color: '#ffffff' }}
+                        labelStyle={{ color: '#ffffff' }}
+                        formatter={(value: number) => formatUsd(Number(value))}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="min-w-[7.5rem] shrink-0 space-y-1.5">
+                  {slices.map((s) => (
+                    <div key={s.name} className="group flex items-center gap-1.5">
+                      <span
+                        className="h-2 w-2 shrink-0 rounded-full"
+                        style={{ backgroundColor: s.color }}
+                      />
+                      <span className="min-w-0 truncate text-[10px] text-gray-400 transition-colors group-hover:text-white">
+                        {s.name}
+                      </span>
+                      <span className="ml-auto shrink-0 text-[10px] tabular-nums text-white">
+                        {formatUsd(s.value)}
+                      </span>
+                    </div>
+                  ))}
+                  <div className="mt-1.5 border-t border-zinc-700/50 pt-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-medium text-yellow-400">Total</span>
+                      <span className="text-[10px] font-medium tabular-nums text-yellow-400">
+                        {formatUsd(total)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           )}
-        </button>
-        {expandedSections.general && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            <AssetCard
-              title="Fund Distribution"
-              pieData={generalDistributionData}
-              total={currentEquity !== null ? currentEquity : undefined}
-            />
-            <AssetCard
-              title="Token Allocation"
-              pieData={tokenAllocationData}
-            />
-          </div>
-        )}
-      </div>
 
-      {/* Row 2: Exchanges (Centralized) */}
-      <div className="space-y-2">
-        <button
-          onClick={() => toggleSection('exchanges')}
-          className="flex items-center gap-2 w-full hover:bg-zinc-800/30 p-1 rounded transition-colors"
-        >
-          <div className="w-0.5 h-4 bg-yellow-500 rounded-full" />
-          <h2 className="text-sm font-semibold text-white">Exchanges (Centralized)</h2>
-          {expandedSections.exchanges ? (
-            <ChevronUp className="w-3 h-3 text-gray-400 ml-auto" />
-          ) : (
-            <ChevronDown className="w-3 h-3 text-gray-400 ml-auto" />
-          )}
-        </button>
-        {expandedSections.exchanges && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            {exchanges.map((exchange) => (
-              <AssetCard
-                key={exchange.id}
-                title={exchange.name}
-                pieData={exchange.data}
-              />
-            ))}
+          <div className="min-h-[160px] flex-1 rounded-lg border border-zinc-800/50 bg-zinc-900/50 p-3 backdrop-blur-sm transition-all hover:border-yellow-500/30">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h3 className="text-xs font-medium text-gray-300">Binance History</h3>
+              <div className="flex items-center gap-1">
+                {PERIODS.map((key) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setPeriod(key)}
+                    className={`rounded px-1.5 py-0.5 text-[10px] transition-all ${
+                      period === key
+                        ? 'bg-yellow-500/20 font-medium text-yellow-400'
+                        : 'text-gray-500 hover:text-gray-300'
+                    }`}
+                  >
+                    {key}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {history.length === 0 ? (
+              <div className="flex h-[120px] items-center justify-center text-[10px] text-zinc-600">
+                Daily curve starts after the first 00:00 UTC snapshot.
+              </div>
+            ) : (
+              <div style={{ height: 120, minWidth: 200 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={history} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+                    <XAxis
+                      dataKey="date"
+                      stroke="#52525b"
+                      tick={{ fill: '#71717a', fontSize: 9 }}
+                      tickLine={false}
+                      tickFormatter={formatAxisDate}
+                    />
+                    <YAxis
+                      stroke="#52525b"
+                      tick={{ fill: '#71717a', fontSize: 9 }}
+                      tickLine={false}
+                      width={40}
+                      tickFormatter={(v) => formatUsd(Number(v))}
+                    />
+                    <Tooltip
+                      contentStyle={TOOLTIP_STYLE}
+                      itemStyle={{ color: '#ffffff' }}
+                      labelStyle={{ color: '#ffffff' }}
+                      labelFormatter={(label) => formatAxisDate(String(label))}
+                      formatter={(value: number) => [formatUsd(Number(value)), 'Balance']}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="total_usdt"
+                      stroke="#3b82f6"
+                      strokeWidth={2}
+                      fill={`url(#${gradientId})`}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </div>
-        )}
-      </div>
 
-      {/* Row 3: Wallets (Decentralized) */}
-      <div className="space-y-2">
-        <button
-          onClick={() => toggleSection('wallets')}
-          className="flex items-center gap-2 w-full hover:bg-zinc-800/30 p-1 rounded transition-colors"
-        >
-          <div className="w-0.5 h-4 bg-yellow-500 rounded-full" />
-          <h2 className="text-sm font-semibold text-white">Wallets (Decentralized)</h2>
-          {expandedSections.wallets ? (
-            <ChevronUp className="w-3 h-3 text-gray-400 ml-auto" />
-          ) : (
-            <ChevronDown className="w-3 h-3 text-gray-400 ml-auto" />
+          {capturedAt && (
+            <p className="shrink-0 text-[10px] text-zinc-600">
+              Snapshot from {capturedAt}. Daily poll at 00:00 UTC.
+            </p>
           )}
-        </button>
-        {expandedSections.wallets && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            {wallets.map((wallet) => (
-              <AssetCard
-                key={wallet.id}
-                title={wallet.name}
-                pieData={wallet.data}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+        </>
+      )}
     </div>
   );
 }

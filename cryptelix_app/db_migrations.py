@@ -308,3 +308,51 @@ def ensure_trades_futures_columns() -> None:
                 """
             )
         )
+
+
+def ensure_trades_mfe_columns() -> None:
+    """Nullable kline-based MFE/MAE on trades (filled in the background)."""
+    with engine.begin() as conn:
+        for column, ddl_type in (
+            ("mfe_points", "numeric(24,8)"),
+            ("mae_points", "numeric(24,8)"),
+            ("mfe_percent", "numeric(18,8)"),
+            ("mae_percent", "numeric(18,8)"),
+        ):
+            conn.execute(
+                text(f"ALTER TABLE trades ADD COLUMN IF NOT EXISTS {column} {ddl_type}")
+            )
+
+
+def ensure_portfolio_daily_snapshots() -> None:
+    """Combined Binance equity points (spot + futures), one row per user per UTC day."""
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS portfolio_daily_snapshots (
+                    id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                    user_id         integer NOT NULL REFERENCES users(id),
+                    exchange_name   varchar(20) NOT NULL DEFAULT 'binance',
+                    snapshot_date   date NOT NULL,
+                    total_usdt      numeric(24, 8) NOT NULL DEFAULT 0,
+                    assets          jsonb NOT NULL DEFAULT '[]'::jsonb,
+                    captured_at     timestamptz NOT NULL DEFAULT now()
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS portfolio_daily_user_exchange_date_unique
+                    ON portfolio_daily_snapshots (user_id, exchange_name, snapshot_date)
+                """
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_portfolio_daily_snapshots_user_id "
+                "ON portfolio_daily_snapshots (user_id)"
+            )
+        )

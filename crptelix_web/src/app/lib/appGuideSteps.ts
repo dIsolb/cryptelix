@@ -31,7 +31,7 @@ export const APP_GUIDE_STEPS: AppGuideStep[] = [
     target: 'widgets',
     title: 'Widgets',
     description:
-      'Drop charts and reports onto the canvas — Price Chart, WvL, cumulative P&L, Portfolio Mix, Stats, FTR, and more — all fed by your Deal Base.',
+      'Drop charts and reports onto the canvas — Price Chart, WvL, cumulative P&L, Volume Mix, Stats, FTR, and more — all fed by your Deal Base.',
     view: 'constructor',
     openWidgets: true,
   },
@@ -64,7 +64,7 @@ export const APP_GUIDE_STEPS: AppGuideStep[] = [
     target: 'zoom-in',
     title: 'Zoom In',
     description:
-      'Move closer to inspect a widget or drawing. You can also zoom with the mouse wheel.',
+      'Move closer to inspect a widget or drawing. Zoom with Ctrl (or Cmd) + mouse wheel.',
     view: 'constructor',
   },
   {

@@ -14,6 +14,9 @@ interface TradesStatsPayload {
   max_drawdown_percent: number;
   percent_profitable: number;
   avg_trade: number;
+  avg_winning_trade?: number;
+  avg_losing_trade?: number;
+  realized_rr?: number | null;
 }
 
 function formatUsd(n: number): string {
@@ -104,7 +107,7 @@ export function KeyMetricsCards() {
           <div className="truncate text-lg font-bold tabular-nums text-zinc-100">
             {loading && !stats ? '…' : pfDisplay}
           </div>
-          <div className="text-xs text-gray-500">Risk/Reward Ratio</div>
+          <div className="text-xs text-gray-500">Gross profit / |gross loss|</div>
         </div>
 
         <div className={cardClass}>
@@ -144,6 +147,18 @@ export function KeyMetricsCards() {
             {loading && !stats ? '…' : formatUsd(avg)}
           </div>
           <div className="text-xs text-gray-500">Per trade</div>
+        </div>
+
+        <div className={cardClass}>
+          <div className="text-xs font-medium text-gray-400">Realized R:R</div>
+          <div className="truncate text-lg font-bold tabular-nums text-zinc-100">
+            {loading && !stats
+              ? '…'
+              : stats?.realized_rr != null && Number.isFinite(stats.realized_rr)
+                ? `${stats.realized_rr.toFixed(2)}R`
+                : '—'}
+          </div>
+          <div className="text-xs text-gray-500">Avg win / |avg loss|</div>
         </div>
       </div>
     </div>

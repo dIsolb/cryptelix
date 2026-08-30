@@ -3,6 +3,9 @@
 .env.local
 .env.*.local
 
+# Internal readiness plan — transferred via private channels, not git
+OPEN_REGISTRATION_READINESS.md
+
 # Python
 __pycache__/
 *.py[cod]

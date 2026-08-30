@@ -28,7 +28,6 @@ export function ConnectTradingViewModal({ isOpen, onClose, onConnect }: ConnectT
     if (!apiToken) return;
     
     // Simulate connection
-    console.log('Connecting to TradingView...');
     setTimeout(() => {
       onConnect();
       onClose();

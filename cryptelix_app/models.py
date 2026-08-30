@@ -8,6 +8,8 @@ from sqlalchemy import (
 
     Column,
 
+    Date,
+
     DateTime,
 
     ForeignKey,
@@ -121,6 +123,12 @@ class Trade(Base):
     margin_mode = Column(String(10), nullable=True)
 
     liquidation_price = Column(Numeric(18, 8), nullable=True)
+
+    # Real MFE/MAE from public klines (NULL until background fill).
+    mfe_points = Column(Numeric(24, 8), nullable=True)
+    mae_points = Column(Numeric(24, 8), nullable=True)
+    mfe_percent = Column(Numeric(18, 8), nullable=True)
+    mae_percent = Column(Numeric(18, 8), nullable=True)
 
 
 
@@ -470,6 +478,22 @@ class FuturesPositionInventory(Base):
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
+    )
+
+
+class PortfolioDailySnapshot(Base):
+    """One combined Binance equity point per UTC day (spot + futures wallets)."""
+
+    __tablename__ = "portfolio_daily_snapshots"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    exchange_name = Column(String(20), nullable=False, default="binance")
+    snapshot_date = Column(Date, nullable=False)
+    total_usdt = Column(Numeric(24, 8), nullable=False, default=0)
+    assets = Column(JSONB, nullable=False, default=list)
+    captured_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
 

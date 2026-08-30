@@ -25,7 +25,9 @@ function widgetBodyClass(type: Widget['type']): string {
     type === 'line-chart' ||
     type === 'bar-chart' ||
     type === 'area-chart' ||
-    type === 'pie-chart'
+    type === 'pie-chart' ||
+    type === 'pnl-calendar' ||
+    type === 'session-heatmap'
   ) {
     return 'min-h-0 min-w-0 flex-1 overflow-hidden';
   }
@@ -35,6 +37,10 @@ function widgetBodyClass(type: Widget['type']): string {
 function displayWidgetTitle(widget: Widget): string {
   if (widget.type === 'line-chart') return 'Price Chart';
   if (widget.type === 'area-chart') return 'Cul. PnL';
+  if (widget.type === 'pie-chart') return 'Volume Mix';
+  if (widget.type === 'pnl-calendar') return 'PnL Calendar';
+  if (widget.type === 'symbol-scorecard') return 'Symbol Scorecard';
+  if (widget.type === 'session-heatmap') return 'Session Heatmap';
   return widget.title;
 }
 
@@ -417,7 +423,14 @@ function FlexibleWidgetInner({
                 onMouseDown={handleMouseDown}
                 title="Drag to move"
               >
-                {displayWidgetTitle(widget)}
+                <span className="inline-flex max-w-full items-center gap-1.5">
+                  <span className="truncate">{displayWidgetTitle(widget)}</span>
+                  {widget.type === 'line-chart' && (
+                    <span className="shrink-0 rounded border border-yellow-500/40 bg-yellow-500/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-yellow-400">
+                      Binance
+                    </span>
+                  )}
+                </span>
               </h3>
               <div className={widgetBodyClass(widget.type)}>
                 {children}

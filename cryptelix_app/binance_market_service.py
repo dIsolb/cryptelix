@@ -27,6 +27,9 @@ BINANCE_DATA_BASE = "https://data-api.binance.vision"
 BINANCE_API_FALLBACK = "https://api.binance.com"
 REQUEST_TIMEOUT_SEC = 8.0
 CACHE_TTL_SEC = 10.0
+KLINES_CACHE_TTL_SEC = 60.0
+KLINES_ALLOWED_INTERVALS = frozenset({"15m", "1h", "4h", "1d"})
+KLINES_MAX_LIMIT = 500
 
 FIELD_LAST_PRICE = "last_price"
 FIELD_BID_ASK = "bid_ask"
@@ -201,6 +204,124 @@ def fetch_ticker_24h(symbol: str) -> dict[str, Any]:
         "close_time_ms": data.get("closeTime"),
         "trade_count": data.get("count"),
     }
+
+
+def pair_to_spot_symbol(pair: object) -> str:
+    """BTC/USDT, BTC/USDT:USDT, btcusdt → BTCUSDT."""
+    raw = str(pair or "").strip()
+    if ":" in raw:
+        raw = raw.split(":", 1)[0]
+    return normalize_binance_symbol(raw)
+
+
+def spot_symbol_candidates(pair: object) -> list[str]:
+    """Spot symbols to try. Coin-M SOL/USD has no SOLUSD ticker — fall back to SOLUSDT."""
+    primary = pair_to_spot_symbol(pair)
+    out: list[str] = []
+
+    def add(symbol: str) -> None:
+        if symbol and symbol not in out:
+            out.append(symbol)
+
+    add(primary)
+    if primary.endswith("USD") and not primary.endswith(("USDT", "USDC")):
+        add(f"{primary[:-3]}USDT")
+        add(f"{primary[:-3]}USDC")
+    return out
+
+
+def fetch_klines(
+    symbol: str,
+    interval: str = "1h",
+    limit: int = 200,
+    start_time_ms: int | None = None,
+    end_time_ms: int | None = None,
+) -> list[dict[str, Any]]:
+    if interval not in KLINES_ALLOWED_INTERVALS:
+        raise BinanceMarketError(
+            f"interval must be one of: {', '.join(sorted(KLINES_ALLOWED_INTERVALS))}"
+        )
+    capped = max(1, min(int(limit), KLINES_MAX_LIMIT))
+    params: dict[str, str] = {
+        "symbol": symbol,
+        "interval": interval,
+        "limit": str(capped),
+    }
+    if start_time_ms is not None:
+        params["startTime"] = str(int(start_time_ms))
+    if end_time_ms is not None:
+        params["endTime"] = str(int(end_time_ms))
+
+    raw = _http_get_json("/api/v3/klines", params)
+    if not isinstance(raw, list):
+        raise BinanceMarketError("Unexpected klines payload")
+
+    out: list[dict[str, Any]] = []
+    for row in raw:
+        if not isinstance(row, (list, tuple)) or len(row) < 6:
+            continue
+        out.append(
+            {
+                "open_time_ms": int(row[0]),
+                "open": str(row[1]),
+                "high": str(row[2]),
+                "low": str(row[3]),
+                "close": str(row[4]),
+                "volume": str(row[5]),
+            }
+        )
+    return out
+
+
+def get_klines(
+    symbol_raw: object,
+    interval: str = "1h",
+    limit: int = 200,
+    start_time_ms: int | None = None,
+    end_time_ms: int | None = None,
+    *,
+    use_cache: bool = True,
+) -> dict[str, Any]:
+    cache_key = f"kl|{symbol_raw}|{interval}|{limit}|{start_time_ms}|{end_time_ms}"
+    if use_cache:
+        now = time.monotonic()
+        with _cache_lock:
+            hit = _cache.get(cache_key)
+            if hit and hit[0] > now:
+                cached = dict(hit[1])
+                cached["cached"] = True
+                return cached
+
+    last_err: Exception | None = None
+    result: dict[str, Any] | None = None
+    for symbol in spot_symbol_candidates(symbol_raw):
+        try:
+            candles = fetch_klines(
+                symbol,
+                interval=interval,
+                limit=limit,
+                start_time_ms=start_time_ms,
+                end_time_ms=end_time_ms,
+            )
+        except BinanceMarketError as exc:
+            last_err = exc
+            continue
+        result = {
+            "source": "binance_spot_public",
+            "symbol": symbol,
+            "interval": interval,
+            "cached": False,
+            "candles": candles,
+        }
+        break
+
+    if result is None:
+        raise last_err or BinanceMarketError("No klines for symbol")
+
+    if use_cache:
+        with _cache_lock:
+            _cache[cache_key] = (time.monotonic() + KLINES_CACHE_TTL_SEC, dict(result))
+    return result
 
 
 def fetch_avg_price(symbol: str) -> dict[str, Any]:

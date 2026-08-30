@@ -54,13 +54,25 @@ from futures_sync_service import backfill_futures_trades
 from futures_aggregator import process_all_unprocessed_fills as process_futures_fills
 from futures_ws_listener import get_futures_ws_status, start_futures_ws
 from binance_ws_listener import get_ws_status, stop_binance_ws
+from portfolio_snapshot_service import (
+    capture_binance_portfolio,
+    get_binance_portfolio_payload,
+    portfolio_daily_loop,
+)
+from binance_market_service import (
+    BinanceMarketError,
+    get_klines,
+    pair_to_spot_symbol,
+)
+from mfe_mae_service import fill_mfe_mae_for_user, trade_mfe_mae
 from db_migrations import (
     ensure_balance_spot_constraints,
     ensure_futures_tables,
     ensure_multi_user_constraints,
     ensure_trades_futures_columns,
+    ensure_portfolio_daily_snapshots,
+    ensure_trades_mfe_columns,
 )
-from models import BalanceSpotTransaction as BalanceSpotTransactionModel
 from models import ChatMessage as ChatMessageModel  # noqa: F401 — register ORM mapper
 from models import APIKey as APIKeyModel
 from models import BinanceWs as BinanceWsModel
@@ -185,8 +197,15 @@ def _apply_schema_patches() -> None:
         ensure_multi_user_constraints()
         ensure_futures_tables()
         ensure_trades_futures_columns()
+        ensure_portfolio_daily_snapshots()
+        ensure_trades_mfe_columns()
     except Exception as exc:
         print(f"[WARN] Schema patch skipped: {exc}")
+
+
+@app.on_event("startup")
+async def _start_portfolio_daily_loop() -> None:
+    asyncio.create_task(portfolio_daily_loop())
 
 
 _CORS_ORIGINS, _CORS_ORIGIN_REGEX = _parse_cors_origins()
@@ -273,6 +292,21 @@ async def get_financial_summary(
         raise _internal_error(exc) from exc
 
     return _summary_to_dict(summary)
+
+
+@app.get("/api/v1/market/klines")
+async def get_market_klines(
+    symbol: str = Query(..., description="Pair or Binance symbol, e.g. BTC/USDT"),
+    interval: str = Query("1h"),
+    limit: int = Query(200, ge=1, le=500),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Public Binance spot klines (cached ~60s). Does not use the user's API key."""
+    try:
+        pair_to_spot_symbol(symbol)
+        return get_klines(symbol, interval=interval, limit=limit)
+    except BinanceMarketError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 _PROFIT_TREND_PERIOD_TRUNC = {
@@ -764,59 +798,15 @@ async def get_binance_portfolio(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
-    """Latest balance snapshots with USDT valuation."""
-    subq = (
-        db.query(
-            BalanceSpotTransactionModel.asset,
-            func.max(BalanceSpotTransactionModel.executed_at).label("max_at"),
-        )
-        .filter(
-            BalanceSpotTransactionModel.user_id == current_user.id,
-            BalanceSpotTransactionModel.type == "BALANCE_SNAPSHOT",
-        )
-        .group_by(BalanceSpotTransactionModel.asset)
-        .subquery()
-    )
-
-    rows = (
-        db.query(BalanceSpotTransactionModel)
-        .join(
-            subq,
-            (BalanceSpotTransactionModel.asset == subq.c.asset)
-            & (BalanceSpotTransactionModel.executed_at == subq.c.max_at),
-        )
-        .filter(
-            BalanceSpotTransactionModel.user_id == current_user.id,
-            BalanceSpotTransactionModel.type == "BALANCE_SNAPSHOT",
-        )
-        .all()
-    )
-
-    assets = []
-    total_usdt = 0.0
-    for row in rows:
-        amount = float(row.amount or 0)
-        rate = float(row.quote_to_usdt_rate or 0)
-        value_usdt = amount * rate if rate else 0.0
-        total_usdt += value_usdt
-        assets.append(
-            {
-                "asset": row.asset,
-                "total": str(row.amount),
-                "free": str(row.free) if row.free is not None else None,
-                "locked": str(row.locked) if row.locked is not None else None,
-                "value_usdt": round(value_usdt, 2),
-                "captured_at": row.executed_at.isoformat() if row.executed_at else None,
-            }
-        )
-
-    return {
-        "exchange_name": "binance",
-        "account_type": "spot",
-        "total_usdt": round(total_usdt, 2),
-        "assets": sorted(assets, key=lambda a: a["value_usdt"], reverse=True),
-        "ws": get_ws_status(current_user.id, "spot"),
-    }
+    """Latest combined Binance allocation (spot + futures) and daily equity history."""
+    payload = get_binance_portfolio_payload(db, current_user.id)
+    needs_capture = bool(payload.pop("needs_capture", False))
+    if needs_capture:
+        await capture_binance_portfolio(current_user.id)
+        db.expire_all()
+        payload = get_binance_portfolio_payload(db, current_user.id)
+        payload.pop("needs_capture", None)
+    return payload
 
 
 async def _run_binance_connect_job(job_id: str, account_type: str) -> None:
@@ -851,6 +841,10 @@ async def _run_binance_connect_job(job_id: str, account_type: str) -> None:
         else:
             job_update["ws_status"] = "connected"
         _CONNECT_JOBS[job_id].update(job_update)
+        try:
+            await capture_binance_portfolio(user_id)
+        except Exception:
+            logger.warning("Portfolio snapshot after spot connect failed for user %s", user_id)
     except Exception as exc:
         logger.exception("Binance connect job %s failed", job_id)
         _CONNECT_JOBS[job_id].update(
@@ -908,6 +902,10 @@ async def _run_binance_futures_job(job_id: str) -> None:
                 "finished_at": datetime.utcnow().isoformat() + "Z",
             }
         )
+        try:
+            await capture_binance_portfolio(user_id)
+        except Exception:
+            logger.warning("Portfolio snapshot after futures connect failed for user %s", user_id)
     except Exception as exc:
         logger.exception("Binance futures job %s failed", job_id)
         _CONNECT_JOBS[job_id].update(
@@ -1128,6 +1126,13 @@ async def get_trades_stats(
         (winners / total_trades * 100.0) if total_trades > 0 else 0.0
     )
     avg_trade = (total_net_profit / total_trades) if total_trades > 0 else 0.0
+    avg_winning_trade = (sum_positive_pnl / winners) if winners > 0 else 0.0
+    avg_losing_trade = (sum_negative_pnl / losers) if losers > 0 else 0.0
+    realized_rr: float | None
+    if losers > 0 and abs(avg_losing_trade) > 1e-12:
+        realized_rr = avg_winning_trade / abs(avg_losing_trade)
+    else:
+        realized_rr = None
 
     return {
         "total_net_profit": total_net_profit,
@@ -1139,6 +1144,9 @@ async def get_trades_stats(
         "max_drawdown_percent": max_drawdown_percent,
         "percent_profitable": percent_profitable,
         "avg_trade": avg_trade,
+        "avg_winning_trade": avg_winning_trade,
+        "avg_losing_trade": avg_losing_trade,
+        "realized_rr": realized_rr,
     }
 
 
@@ -1149,7 +1157,7 @@ async def get_trades_ftr_report(
 ):
     """
     Full Trading Report: extended metrics for the FTR widget.
-    MFE/MAE use entry vs exit as a proxy when intraday extremes are not stored.
+    MFE/MAE prefer kline high/low persisted on the trade; otherwise entry/exit proxy.
     """
     try:
         connected = connected_exchange_names(db, current_user.id)
@@ -1222,26 +1230,34 @@ async def get_trades_ftr_report(
         if t.date is not None:
             dates_for_span.append(t.date if isinstance(t.date, datetime) else datetime.combine(t.date, time.min))
 
-        ep = t.entry_price
-        xp = t.exit_price
-        if ep is not None and xp is not None:
-            try:
-                e = float(ep)
-                x = float(xp)
-            except (TypeError, ValueError):
-                e = x = None
-            if e is not None and x is not None and e != 0:
-                side = (t.side or "").strip().lower()
-                if side.startswith("s"):
-                    mfe = max(0.0, e - x)
-                    mae = max(0.0, x - e)
-                else:
-                    mfe = max(0.0, x - e)
-                    mae = max(0.0, e - x)
-                mfe_pts_list.append(mfe)
-                mae_pts_list.append(mae)
-                mfe_pct_list.append((mfe / abs(e)) * 100.0)
-                mae_pct_list.append((mae / abs(e)) * 100.0)
+        stored = trade_mfe_mae(t)
+        if stored is not None:
+            mfe, mae, mfe_pct, mae_pct = stored
+            mfe_pts_list.append(mfe)
+            mae_pts_list.append(mae)
+            mfe_pct_list.append(mfe_pct)
+            mae_pct_list.append(mae_pct)
+        else:
+            ep = t.entry_price
+            xp = t.exit_price
+            if ep is not None and xp is not None:
+                try:
+                    e = float(ep)
+                    x = float(xp)
+                except (TypeError, ValueError):
+                    e = x = None
+                if e is not None and x is not None and e != 0:
+                    side = (t.side or "").strip().lower()
+                    if side.startswith("s"):
+                        mfe = max(0.0, e - x)
+                        mae = max(0.0, x - e)
+                    else:
+                        mfe = max(0.0, x - e)
+                        mae = max(0.0, e - x)
+                    mfe_pts_list.append(mfe)
+                    mae_pts_list.append(mae)
+                    mfe_pct_list.append((mfe / abs(e)) * 100.0)
+                    mae_pct_list.append((mae / abs(e)) * 100.0)
 
         if t.date is not None and t.closed_at is not None:
             d0 = t.date if isinstance(t.date, datetime) else datetime.combine(t.date, time.min)
@@ -1307,6 +1323,9 @@ async def get_trades_ftr_report(
     avg_mae_points = _avg(mae_pts_list)
     avg_mfe_percent = _avg(mfe_pct_list)
     avg_mae_percent = _avg(mae_pct_list)
+
+    if any(getattr(t, "mfe_points", None) is None for t in rows):
+        asyncio.create_task(run_in_threadpool(fill_mfe_mae_for_user, current_user.id))
 
     return {
         "total_profit_gross_minus_loss": total_profit_gross_minus_loss,
