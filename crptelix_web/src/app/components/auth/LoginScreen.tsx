@@ -207,16 +207,26 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
         initial={{ opacity: 0, y: 16, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-        className="relative z-10 w-full max-w-[420px]"
+        className="relative z-10 w-full max-w-[460px]"
       >
-        <div className="mb-8 flex justify-center">
-          <CryptelixLogo variant="wordmark" showAlpha={false} />
+        <div className="mb-16 flex flex-col items-center text-center">
+          <CryptelixLogo
+            variant="wordmark"
+            showAlpha={false}
+            className="h-16 w-auto select-none object-contain object-center sm:h-[4.5rem]"
+          />
+          <h1 className="mt-3 text-[2.15rem] font-bold leading-[1.1] tracking-tight text-white sm:text-5xl">
+            Join your own
+          </h1>
+          <p className="mt-1.5 text-[2.15rem] font-bold leading-[1.1] tracking-tight text-yellow-400 sm:text-5xl">
+            Analytical Workspace
+          </p>
         </div>
 
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/95 p-8 shadow-2xl shadow-black/40 backdrop-blur-sm">
-          <div className="mb-6 text-center">
-            <h1 className="text-2xl font-bold tracking-tight text-white">Sign in to Cryptelix</h1>
-            <p className="mt-2 text-sm text-zinc-400">
+        <div className="rounded-3xl border border-zinc-800/90 bg-zinc-900/90 p-8 shadow-2xl shadow-black/50 backdrop-blur-sm sm:p-9">
+          <div className="mb-7 text-center">
+            <h2 className="text-[28px] font-bold tracking-tight text-white">Sign In</h2>
+            <p className="mt-3 text-sm text-zinc-400">
               {step === 'email'
                 ? 'Enter your invited email to continue.'
                 : isActivate
@@ -274,12 +284,12 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
             </form>
           ) : (
             <form onSubmit={handlePasswordStep} className="space-y-4">
-              <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-xs text-zinc-400">
-                {email}
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-xs text-zinc-400">
+                <span className="min-w-0 truncate">{email}</span>
                 <button
                   type="button"
                   onClick={goBackToEmail}
-                  className="ml-2 text-yellow-500/90 hover:text-yellow-400"
+                  className="shrink-0 text-[11px] font-medium text-yellow-500/90 hover:text-yellow-400"
                 >
                   Change
                 </button>
@@ -397,9 +407,22 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
           )}
 
           <p className="mt-6 text-center text-xs leading-relaxed text-zinc-500">
-            Alpha Test | Release - June 2026 - Limited Access
+            Alpha Test | Limited Access
           </p>
         </div>
+
+        <p className="mt-4 px-2 text-center text-[13px] leading-relaxed text-zinc-500 text-balance">
+          By continuing, you acknowledge that you understand and agree to the{' '}
+          <a
+            href="https://cryptelix.app/privacy-policy"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-yellow-500/90 underline decoration-yellow-500/40 underline-offset-2 hover:text-yellow-400"
+          >
+            Privacy Policy
+          </a>
+          .
+        </p>
       </motion.div>
     </div>
   );
