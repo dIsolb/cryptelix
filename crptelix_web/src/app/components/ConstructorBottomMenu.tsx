@@ -1,4 +1,4 @@
-import { LayoutGrid, Paintbrush, Type, Plus, LineChart, BarChart3, AreaChart, PieChart, Zap, Table, Wallet, X } from 'lucide-react';
+import { LayoutGrid, Paintbrush, Type, Plus, LineChart, BarChart3, AreaChart, PieChart, Zap, Table, Wallet, Calendar, ListOrdered, Clock, X } from 'lucide-react';
 import { WidgetType } from './DashboardWidget';
 import { motion } from 'motion/react';
 import { useEffect, useRef, useState } from 'react';
@@ -72,7 +72,7 @@ export function ConstructorBottomMenu({
       type: 'line-chart' as WidgetType,
       icon: LineChart,
       label: 'Price Chart',
-      description: 'Line of entry prices for a chosen pair from your Deal Base trades.',
+      description: 'Public Binance close prices for a pair from your Deal Base.',
     },
     {
       type: 'bar-chart' as WidgetType,
@@ -89,7 +89,7 @@ export function ConstructorBottomMenu({
     {
       type: 'pie-chart' as WidgetType,
       icon: PieChart,
-      label: 'Portfolio Mix',
+      label: 'Volume Mix',
       description: 'Share of traded volume by asset, or by Spot / USDT-M / COIN-M.',
     },
     {
@@ -108,7 +108,25 @@ export function ConstructorBottomMenu({
       type: 'portfolio-widget' as WidgetType,
       icon: Wallet,
       label: 'Portfolio',
-      description: 'Allocation and history across exchanges and wallets in one view.',
+      description: 'Binance spot + futures allocation, with a daily equity curve.',
+    },
+    {
+      type: 'pnl-calendar' as WidgetType,
+      icon: Calendar,
+      label: 'PnL Calendar',
+      description: 'Daily net P&L heatmap from your Deal Base, by calendar month.',
+    },
+    {
+      type: 'symbol-scorecard' as WidgetType,
+      icon: ListOrdered,
+      label: 'Symbol Scorecard',
+      description: 'Per-pair trades, win rate, net P&L, and realized R.',
+    },
+    {
+      type: 'session-heatmap' as WidgetType,
+      icon: Clock,
+      label: 'Session Heatmap',
+      description: 'Net P&L by UTC hour and weekday across the Deal Base.',
     },
   ];
 
@@ -165,9 +183,6 @@ export function ConstructorBottomMenu({
                     <motion.button
                       key={widget.type}
                       onClick={() => {
-                        if (widget.label === 'Price Chart') {
-                          console.log('Button Clicked: Price Chart');
-                        }
                         onAddWidget(widget.type);
                       }}
                       className="group relative flex h-10 w-10 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-900 transition-all hover:border-zinc-500 hover:bg-zinc-800"

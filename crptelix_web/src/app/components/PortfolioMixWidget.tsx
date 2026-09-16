@@ -160,9 +160,9 @@ export function PortfolioMixWidget() {
           No trade volume yet
         </div>
       ) : (
-        <div className="flex min-h-0 min-w-0 flex-1 items-center gap-3">
-          <div className="min-h-0 min-w-0 flex-1">
-            <ResponsiveContainer width="100%" height="100%">
+        <div className="flex h-[160px] min-h-[160px] w-full min-w-0 flex-1 items-center gap-3">
+          <div className="h-[160px] min-w-0 flex-1">
+            <ResponsiveContainer width="100%" height={160}>
               <PieChart>
                 <Pie
                   data={slices}
@@ -170,8 +170,8 @@ export function PortfolioMixWidget() {
                   nameKey="name"
                   cx="50%"
                   cy="50%"
-                  innerRadius="42%"
-                  outerRadius="72%"
+                  innerRadius={38}
+                  outerRadius={58}
                   paddingAngle={1.5}
                   isAnimationActive={false}
                 >

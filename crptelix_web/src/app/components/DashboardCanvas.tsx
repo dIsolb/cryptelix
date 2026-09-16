@@ -1,5 +1,4 @@
-import { Widget } from './DashboardWidget';
-import { WidgetType } from './DashboardWidget';
+import { Widget, WidgetType, widgetDefaultSize } from './DashboardWidget';
 import { FlexibleWidget } from './FlexibleWidget';
 import { ZoomIn, ZoomOut, LocateFixed } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -919,8 +918,9 @@ export function DashboardCanvas({
     });
   };
 
-  // Native non-passive wheel listener — React's onWheel is passive and
-  // cannot call preventDefault (floods console + breaks zoom intent).
+  // Native non-passive wheel: Ctrl/Cmd+wheel zooms. Plain wheel scrolls a
+  // widget body when it overflows (FTR, Portfolio, text). Otherwise the
+  // canvas scroll container pans as usual.
   const applyZoomAtAnchorRef = useRef(applyZoomAtAnchor);
   applyZoomAtAnchorRef.current = applyZoomAtAnchor;
 
@@ -928,18 +928,56 @@ export function DashboardCanvas({
     const container = scrollContainerRef.current;
     if (!container) return;
 
+    const findWidgetScrollable = (start: EventTarget | null): HTMLElement | null => {
+      let el = start instanceof Element ? start : null;
+      while (el && el !== container) {
+        if (el instanceof HTMLElement) {
+          const style = window.getComputedStyle(el);
+          const y =
+            (style.overflowY === 'auto' || style.overflowY === 'scroll') &&
+            el.scrollHeight > el.clientHeight + 1;
+          const x =
+            (style.overflowX === 'auto' || style.overflowX === 'scroll') &&
+            el.scrollWidth > el.clientWidth + 1;
+          if (y || x) return el;
+        }
+        el = el.parentElement;
+      }
+      return null;
+    };
+
     const onWheel = (event: WheelEvent) => {
+      if (event.ctrlKey || event.metaKey) {
+        event.preventDefault();
+        const rect = container.getBoundingClientRect();
+        const anchorX = event.clientX - rect.left;
+        const anchorY = event.clientY - rect.top;
+        const prevZoom = zoomRef.current;
+        const delta = event.deltaY < 0 ? ZOOM_WHEEL_STEP : -ZOOM_WHEEL_STEP;
+        const nextZoom = clampZoom(prevZoom + delta);
+        if (nextZoom === prevZoom) return;
+        applyZoomAtAnchorRef.current(nextZoom, anchorX, anchorY);
+        return;
+      }
+
+      const scrollable = findWidgetScrollable(event.target);
+      if (!scrollable) return;
+
+      // At the widget edge, swallow the event so the canvas does not pan.
       event.preventDefault();
-      const rect = container.getBoundingClientRect();
-      const anchorX = event.clientX - rect.left;
-      const anchorY = event.clientY - rect.top;
+      event.stopPropagation();
 
-      const prevZoom = zoomRef.current;
-      const delta = event.deltaY < 0 ? ZOOM_WHEEL_STEP : -ZOOM_WHEEL_STEP;
-      const nextZoom = clampZoom(prevZoom + delta);
-      if (nextZoom === prevZoom) return;
+      const dy = event.deltaY;
+      const dx = event.deltaX;
+      const canY =
+        (dy < 0 && scrollable.scrollTop > 0) ||
+        (dy > 0 && scrollable.scrollTop + scrollable.clientHeight < scrollable.scrollHeight - 1);
+      const canX =
+        (dx < 0 && scrollable.scrollLeft > 0) ||
+        (dx > 0 && scrollable.scrollLeft + scrollable.clientWidth < scrollable.scrollWidth - 1);
 
-      applyZoomAtAnchorRef.current(nextZoom, anchorX, anchorY);
+      if (canY) scrollable.scrollTop += dy;
+      if (canX) scrollable.scrollLeft += dx;
     };
 
     container.addEventListener('wheel', onWheel, { passive: false });
@@ -950,28 +988,28 @@ export function DashboardCanvas({
     const widgetTitles: Record<WidgetType, string> = {
       'line-chart': 'Price Chart',
       'bar-chart': 'WvL',
-      'pie-chart': 'Portfolio Mix',
+      'pie-chart': 'Volume Mix',
       'area-chart': 'Cul. PnL',
       'stats-card': 'Key Metrics',
       'table': 'Full Trading Report',
       'portfolio': 'Portfolio Analytics',
       'text-field': 'Text',
       'portfolio-widget': 'Portfolio Analytics',
+      'pnl-calendar': 'PnL Calendar',
+      'symbol-scorecard': 'Symbol Scorecard',
+      'session-heatmap': 'Session Heatmap',
     };
 
     const randomX = Math.floor(Math.random() * 400) + 50;
     const randomY = Math.floor(Math.random() * 200) + 50;
+    const def = widgetDefaultSize(type);
 
     const newWidget: Widget = {
       id: `widget-${Date.now()}-${Math.random()}`,
       type,
       title: widgetTitles[type] || 'Widget',
       position: { x: randomX, y: randomY },
-      size: type === 'table'
-        ? scaleSize(600, 500)
-        : type === 'portfolio-widget'
-        ? scaleSize(800, 600)
-        : scaleSize(400, 320),
+      size: scaleSize(def.width, def.height),
     };
     onAddWidget(newWidget);
   };

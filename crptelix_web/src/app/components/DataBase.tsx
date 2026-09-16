@@ -95,9 +95,7 @@ function parseDealNumeric(raw: string, stripPnlPlus: boolean): number | null {
   if (stripPnlPlus) s = s.replace(/^\+/, '');
   if (s === '') return null;
   const n = Number(s);
-  const parsedValue = Number.isFinite(n) ? n : null;
-  console.log('Parsing value:', raw, 'Result:', parsedValue);
-  return parsedValue;
+  return Number.isFinite(n) ? n : null;
 }
 
 /**
@@ -635,7 +633,6 @@ export function DataBase() {
           }
         );
         const responseText = await res.text();
-        console.log('[PATCH /api/v1/trades]', nextDeal.id, res.status, responseText);
         if (res.ok) {
           mergeDealFromPatchResponse(nextDeal.id, responseText);
         } else {
@@ -668,7 +665,6 @@ export function DataBase() {
           }
         );
         const responseText = await res.text();
-        console.log('[PATCH /api/v1/trades notes]', dealId, res.status, responseText);
         if (res.ok) {
           mergeDealFromPatchResponse(dealId, responseText);
         } else {

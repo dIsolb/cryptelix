@@ -28,7 +28,28 @@ export type WidgetType =
   | 'table'
   | 'text-field'
   | 'portfolio'
-  | 'portfolio-widget';
+  | 'portfolio-widget'
+  | 'pnl-calendar'
+  | 'symbol-scorecard'
+  | 'session-heatmap';
+
+export function widgetDefaultSize(type: WidgetType): { width: number; height: number } {
+  switch (type) {
+    case 'table':
+      return { width: 600, height: 500 };
+    case 'portfolio':
+    case 'portfolio-widget':
+      return { width: 800, height: 600 };
+    case 'pnl-calendar':
+      return { width: 440, height: 360 };
+    case 'symbol-scorecard':
+      return { width: 480, height: 380 };
+    case 'session-heatmap':
+      return { width: 460, height: 440 };
+    default:
+      return { width: 400, height: 320 };
+  }
+}
 
 export interface Widget {
   id: string;

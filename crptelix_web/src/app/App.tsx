@@ -4,7 +4,7 @@ import { HTML5Backend } from 'react-dnd-html5-backend';
 import { AiBot } from './components/AiBot';
 import { AuthGate } from './components/auth/AuthGate';
 import { DashboardCanvas } from './components/DashboardCanvas';
-import { Widget } from './components/DashboardWidget';
+import { Widget, widgetDefaultSize } from './components/DashboardWidget';
 import { TopBar } from './components/TopBar';
 import { DataBase } from './components/DataBase';
 import { ConstructorBottomMenu } from './components/ConstructorBottomMenu';
@@ -281,12 +281,16 @@ function AuthenticatedApp({ user, logout }: { user: AuthUser; logout: () => void
                     const widgetTitles: Record<string, string> = {
                       'line-chart': 'Price Chart',
                       'bar-chart': 'Wins vs Losses',
-                      'pie-chart': 'Portfolio Mix',
+                      'pie-chart': 'Volume Mix',
                       'area-chart': 'Cul. PnL',
                       'stats-card': 'Key Metrics',
                       'table': 'Full Trading Report',
                       'portfolio-widget': 'Portfolio Analytics',
+                      'pnl-calendar': 'PnL Calendar',
+                      'symbol-scorecard': 'Symbol Scorecard',
+                      'session-heatmap': 'Session Heatmap',
                     };
+                    const def = widgetDefaultSize(type);
                     const newWidget = {
                       id: `widget-${Date.now()}-${Math.random()}`,
                       type,
@@ -295,12 +299,7 @@ function AuthenticatedApp({ user, logout }: { user: AuthUser; logout: () => void
                         x: Math.floor(Math.random() * scalePx(400)) + scalePx(50),
                         y: Math.floor(Math.random() * scalePx(200)) + scalePx(50),
                       },
-                      size:
-                        type === 'table'
-                          ? scaleSize(600, 500)
-                          : type === 'portfolio-widget'
-                            ? scaleSize(800, 600)
-                            : scaleSize(400, 320),
+                      size: scaleSize(def.width, def.height),
                     };
                     handleAddWidget(newWidget);
                   }}

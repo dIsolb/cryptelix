@@ -56,7 +56,6 @@ export function ConnectWalletModal({ isOpen, onClose, onConnect }: ConnectWallet
 
   const handleWalletConnect = (walletName: string) => {
     // Simulate connection
-    console.log(`Connecting to ${walletName}...`);
     setTimeout(() => {
       onConnect();
       onClose();

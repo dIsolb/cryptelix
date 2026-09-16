@@ -112,7 +112,6 @@ export function AddTradeModal({ onClose, onCreated, customColumns = [] }: AddTra
       });
 
       const responseText = await res.text();
-      console.log('[POST /api/v1/trades]', res.status, responseText);
 
       if (!res.ok) {
         throw new Error(responseText || 'Failed to create trade');

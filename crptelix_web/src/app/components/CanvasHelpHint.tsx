@@ -6,7 +6,8 @@ import { ChatMessageMarkdown } from './ChatMessageMarkdown';
 const HELP_MARKDOWN = `## Canvas controls
 
 - **Pan** — middle or right mouse button, or hold **Space** and drag
-- **Zoom** — mouse wheel
+- **Zoom** — **Ctrl** (or **Cmd**) + mouse wheel
+- **Scroll a widget** — mouse wheel over a scrollable widget (e.g. Full Trading Report)
 - **Select** — click and drag on empty canvas, or **Shift+click** widgets and drawings
 `;
 

@@ -262,6 +262,58 @@ interface FtrReportTableProps {
   ) => void;
 }
 
+export function FtrLiveMetricCard({
+  label,
+  fallbackValue,
+  fallbackPositive,
+  fallbackNegative,
+}: {
+  label: string;
+  fallbackValue?: string | number;
+  fallbackPositive?: boolean;
+  fallbackNegative?: boolean;
+}) {
+  const [row, setRow] = useState<FtrReportRow | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await apiFetch('/api/v1/trades/ftr-report');
+      if (!res.ok) return;
+      const data = (await res.json()) as FtrReportPayload;
+      const found = buildRows(data).find((r) => r.label === label) ?? null;
+      setRow(found);
+    } catch {
+      /* keep last / fallback */
+    }
+  }, [label]);
+
+  useEffect(() => {
+    void load();
+    const later = window.setTimeout(() => void load(), 8000);
+    return () => window.clearTimeout(later);
+  }, [load]);
+
+  useTradesSynced(load);
+
+  const value = row?.value ?? fallbackValue ?? '—';
+  const isPositive = row?.isPositive ?? fallbackPositive;
+  const isNegative = row?.isNegative ?? fallbackNegative;
+  const color = isPositive ? '#22c55e' : isNegative ? '#ef4444' : '#fafafa';
+
+  return (
+    <div className="flex h-full min-h-0 flex-col items-center justify-center overflow-hidden px-3 py-2">
+      <div
+        className="flex max-w-full items-center justify-center gap-2 text-center text-xl font-bold leading-tight"
+        style={{ color }}
+      >
+        {isPositive && <TrendingUp className="h-7 w-7 shrink-0" aria-hidden />}
+        {isNegative && <TrendingDown className="h-7 w-7 shrink-0" aria-hidden />}
+        <span className="min-w-0 break-words">{value}</span>
+      </div>
+    </div>
+  );
+}
+
 export function FtrReportTable({ onExtractMetric }: FtrReportTableProps) {
   const [rows, setRows] = useState<FtrReportRow[]>([]);
 
@@ -281,6 +333,8 @@ export function FtrReportTable({ onExtractMetric }: FtrReportTableProps) {
 
   useEffect(() => {
     void load();
+    const later = window.setTimeout(() => void load(), 8000);
+    return () => window.clearTimeout(later);
   }, [load]);
 
   useTradesSynced(load);
