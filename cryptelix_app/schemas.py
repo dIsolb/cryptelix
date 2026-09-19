@@ -99,11 +99,15 @@ class AuthActivateRequest(BaseModel):
     email: str = Field(..., min_length=3, max_length=255)
     password: str = Field(..., min_length=8, max_length=128)
     invite_code: str = Field(..., min_length=1, max_length=128)
+    # Cloudflare Turnstile token (optional; enforced only when TURNSTILE_SECRET set).
+    turnstile_token: str | None = Field(default=None, max_length=4096)
 
 
 class AuthLoginRequest(BaseModel):
     email: str = Field(..., min_length=3, max_length=255)
     password: str = Field(..., min_length=1, max_length=128)
+    # Cloudflare Turnstile token (optional; enforced only when TURNSTILE_SECRET set).
+    turnstile_token: str | None = Field(default=None, max_length=4096)
 
 
 class UserPublic(BaseModel):

@@ -30,6 +30,7 @@ from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 from analytics_service import get_user_financial_summary
 from ai_service import AIAnalysisError, analyze_trade_sync
+from turnstile import verify_turnstile
 import chat_service as chat_svc
 from trade_visibility import (
     connected_exchange_names,
@@ -65,14 +66,6 @@ from binance_market_service import (
     pair_to_spot_symbol,
 )
 from mfe_mae_service import fill_mfe_mae_for_user, trade_mfe_mae
-from db_migrations import (
-    ensure_balance_spot_constraints,
-    ensure_futures_tables,
-    ensure_multi_user_constraints,
-    ensure_trades_futures_columns,
-    ensure_portfolio_daily_snapshots,
-    ensure_trades_mfe_columns,
-)
 from models import ChatMessage as ChatMessageModel  # noqa: F401 — register ORM mapper
 from models import APIKey as APIKeyModel
 from models import BinanceWs as BinanceWsModel
@@ -190,17 +183,28 @@ def _job_error_detail(exc: Exception, fallback: str) -> str:
     return f"[dev] {type(exc).__name__}: {exc}"
 
 
-@app.on_event("startup")
-def _apply_schema_patches() -> None:
-    try:
-        ensure_balance_spot_constraints()
-        ensure_multi_user_constraints()
-        ensure_futures_tables()
-        ensure_trades_futures_columns()
-        ensure_portfolio_daily_snapshots()
-        ensure_trades_mfe_columns()
-    except Exception as exc:
-        print(f"[WARN] Schema patch skipped: {exc}")
+def _client_ip(request: Request) -> str | None:
+    """Best-effort client IP behind Railway/Cloudflare proxies."""
+    cf_ip = request.headers.get("cf-connecting-ip")
+    if cf_ip:
+        return cf_ip.strip()
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else None
+
+
+def _require_turnstile(request: Request, token: str | None) -> None:
+    """Reject the request when Turnstile is enabled and the token is invalid."""
+    if not verify_turnstile(token, _client_ip(request)):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Captcha verification failed. Please try again.",
+        )
+
+
+# NOTE: Schema migrations are NOT applied automatically at startup. Apply the
+# required DDL manually against dev/prod databases.
 
 
 @app.on_event("startup")
@@ -233,6 +237,7 @@ def post_auth_check_email(
 def post_auth_activate(
     request: Request, body: AuthActivateRequest, db: Session = Depends(get_db)
 ):
+    _require_turnstile(request, body.turnstile_token)
     return activate_user(db, body.email, body.password, body.invite_code)
 
 
@@ -241,6 +246,7 @@ def post_auth_activate(
 def post_auth_login(
     request: Request, body: AuthLoginRequest, db: Session = Depends(get_db)
 ):
+    _require_turnstile(request, body.turnstile_token)
     return login_user(db, body.email, body.password)
 
 
@@ -1483,7 +1489,7 @@ async def analyze_trade_endpoint(
         raise HTTPException(status_code=404, detail="Trade not found")
 
     try:
-        report = await run_in_threadpool(analyze_trade_sync, trade)
+        report = await run_in_threadpool(analyze_trade_sync, trade, current_user.id)
     except AIAnalysisError as exc:
         logger.exception("AI analysis failed")
         raise HTTPException(

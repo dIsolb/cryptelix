@@ -9,6 +9,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from ai_usage import add_response_usage, log_from_acc
+
+_MODEL = "gpt-4o-mini"
+
 _ENV_FILE = (Path(__file__).resolve().parent / ".env").resolve()
 load_dotenv(_ENV_FILE, override=True)
 
@@ -112,16 +116,20 @@ def _insight_violates_rules(text: str, pair: str) -> bool:
     return False
 
 
-def analyze_trade_sync(trade: object) -> str:
+def analyze_trade_sync(trade: object, user_id: int | None = None) -> str:
     """
     Build a user message from trade ORM fields and return the model text (GPT-4o-mini).
     OPENAI_API_KEY is read from the environment.
+
+    Token usage across ALL attempts (including rejected drafts, which still cost
+    money) is metered into ai_usage_events when user_id is provided.
     """
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key or not str(api_key).strip():
         raise AIAnalysisError("OPENAI_API_KEY is not set")
 
     client = OpenAI(api_key=str(api_key).strip())
+    usage_acc: dict[str, int] = {"prompt": 0, "completion": 0}
 
     date_raw = getattr(trade, "date", None) or getattr(trade, "closed_at", None)
     date_s = date_raw.isoformat()[:10] if hasattr(date_raw, "isoformat") else str(date_raw or "n/a")
@@ -163,7 +171,7 @@ def analyze_trade_sync(trade: object) -> str:
 
         try:
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=_MODEL,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": user_content},
@@ -174,7 +182,15 @@ def analyze_trade_sync(trade: object) -> str:
                 frequency_penalty=0.5,
             )
         except Exception as exc:
+            log_from_acc(
+                user_id=user_id,
+                endpoint="trade_analyze",
+                model=_MODEL,
+                acc=usage_acc,
+            )
             raise AIAnalysisError(str(exc)) from exc
+
+        add_response_usage(usage_acc, response)
 
         text = (response.choices[0].message.content or "").strip()
         if not text:
@@ -183,6 +199,15 @@ def analyze_trade_sync(trade: object) -> str:
         if _insight_violates_rules(text, pair):
             last_error = "Insight used a banned opener or was incomplete"
             continue
+        log_from_acc(
+            user_id=user_id,
+            endpoint="trade_analyze",
+            model=_MODEL,
+            acc=usage_acc,
+        )
         return text
 
+    log_from_acc(
+        user_id=user_id, endpoint="trade_analyze", model=_MODEL, acc=usage_acc
+    )
     raise AIAnalysisError(last_error)

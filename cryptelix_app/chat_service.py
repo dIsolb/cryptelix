@@ -22,9 +22,12 @@ from binance_market_service import (
     get_market_snapshot,
     parse_fields as parse_binance_market_fields,
 )
+from ai_usage import add_response_usage, log_from_acc
 from models import ChatMessage as ChatMessageModel
 from models import ChatSession as ChatSessionModel
 from models import Trade as TradeModel
+
+_CHAT_MODEL = "gpt-4o-mini"
 from trade_visibility import connected_exchange_names, visible_trades_sqlalchemy_filter
 
 _ENV_FILE = (Path(__file__).resolve().parent / ".env").resolve()
@@ -790,21 +793,27 @@ def _run_chat_completion_with_tools(
     db: Session,
     user_id: int,
     oai_messages: list[dict[str, Any]],
+    usage_acc: dict[str, int],
 ) -> str:
-    """Chat Completions loop: model may call Deal Base tools up to MAX_TOOL_ROUNDS."""
+    """Chat Completions loop: model may call Deal Base tools up to MAX_TOOL_ROUNDS.
+
+    Token usage from every round (each tool round is a billed call) is
+    accumulated into usage_acc so the caller can meter the full turn.
+    """
     for round_i in range(MAX_TOOL_ROUNDS + 1):
         print(
             f"[chat_service/send_chat] OpenAI round {round_i + 1}…",
             flush=True,
         )
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=_CHAT_MODEL,
             messages=oai_messages,
             tools=CHAT_TOOLS,
             tool_choice="auto",
             temperature=0.5,
             max_tokens=1400,
         )
+        add_response_usage(usage_acc, response)
         msg = response.choices[0].message
         tool_calls = msg.tool_calls or []
 
@@ -947,9 +956,10 @@ def send_chat(
 
     print("[chat_service/send_chat] calling OpenAI gpt-4o-mini (tools)…", flush=True)
     client = OpenAI(api_key=str(api_key).strip())
+    usage_acc: dict[str, int] = {"prompt": 0, "completion": 0}
     try:
         assistant_text = _run_chat_completion_with_tools(
-            client, db, user_id, oai_messages
+            client, db, user_id, oai_messages, usage_acc
         )
     except ChatServiceError:
         db.rollback()
@@ -958,6 +968,11 @@ def send_chat(
         db.rollback()
         print("[chat_service/send_chat] OpenAI error:", repr(exc), flush=True)
         raise ChatServiceError(str(exc)) from exc
+    finally:
+        # Meter tokens spent this turn even if the turn ultimately failed.
+        log_from_acc(
+            user_id=user_id, endpoint="chat_send", model=_CHAT_MODEL, acc=usage_acc
+        )
 
     print(
         "[chat_service/send_chat] OpenAI OK, reply len=",

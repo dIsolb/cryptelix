@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { CryptelixLogo } from '../CryptelixLogo';
 import { isValidEmail, type AuthSession } from '../../lib/authStorage';
 import { apiFetch } from '../../lib/apiClient';
+import { TurnstileWidget, TURNSTILE_ENABLED } from './TurnstileWidget';
 
 type AuthStep = 'email' | 'password';
 type AuthMode = 'needs_activation' | 'needs_login';
@@ -28,7 +29,15 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState('');
+  // Bump to force a fresh Turnstile challenge (tokens are single-use).
+  const [turnstileNonce, setTurnstileNonce] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const resetTurnstile = () => {
+    setTurnstileToken('');
+    setTurnstileNonce((n) => n + 1);
+  };
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -44,6 +53,7 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
     setPassword('');
     setConfirmPassword('');
     setShowPassword(false);
+    resetTurnstile();
   };
 
   const handleEmailStep = async (event: FormEvent) => {
@@ -117,6 +127,11 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
       }
     }
 
+    if (TURNSTILE_ENABLED && !turnstileToken) {
+      setError('Please complete the verification below.');
+      return;
+    }
+
     setError('');
     setIsSubmitting(true);
 
@@ -129,8 +144,13 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
             email: email.trim(),
             password: trimmedPassword,
             invite_code: inviteCode.trim(),
+            turnstile_token: turnstileToken || undefined,
           }
-        : { email: email.trim(), password: trimmedPassword };
+        : {
+            email: email.trim(),
+            password: trimmedPassword,
+            turnstile_token: turnstileToken || undefined,
+          };
 
     try {
       const res = await apiFetch(endpoint, {
@@ -141,6 +161,7 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
 
       if (res.status === 429) {
         setError('Too many attempts. Please wait a minute and try again.');
+        resetTurnstile();
         return;
       }
 
@@ -153,6 +174,7 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
               ? 'Could not activate account.'
               : 'Invalid email or password.')
         );
+        resetTurnstile();
         return;
       }
 
@@ -168,6 +190,7 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
       });
     } catch {
       setError('Network error. Please try again.');
+      resetTurnstile();
     } finally {
       setIsSubmitting(false);
     }
@@ -380,6 +403,14 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
                     />
                   </div>
                 </div>
+              )}
+
+              {TURNSTILE_ENABLED && (
+                <TurnstileWidget
+                  key={turnstileNonce}
+                  onVerify={(token) => setTurnstileToken(token)}
+                  onExpire={() => setTurnstileToken('')}
+                />
               )}
 
               {error && <p className="text-xs text-red-400">{error}</p>}

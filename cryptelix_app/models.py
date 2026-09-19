@@ -4,6 +4,8 @@ import uuid
 
 from sqlalchemy import (
 
+    BigInteger,
+
     Boolean,
 
     Column,
@@ -515,6 +517,30 @@ class Feedback(Base):
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
+    )
+
+
+class AiUsageEvent(Base):
+    """Metering log: one row per OpenAI API call (Shar 1 — measure-first).
+
+    Persistent audit of AI spend per user, so real quotas (4.4) can later be
+    derived from actual p50/p95 usage instead of guesses. cost_usd is computed
+    and frozen at call time from the model price map, so historical cost stays
+    accurate even after switching models.
+    """
+
+    __tablename__ = "ai_usage_events"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    endpoint = Column(String(32), nullable=False)  # 'trade_analyze' | 'chat_send'
+    model = Column(String(64), nullable=False)
+    prompt_tokens = Column(Integer, nullable=False, default=0)
+    completion_tokens = Column(Integer, nullable=False, default=0)
+    total_tokens = Column(Integer, nullable=False, default=0)
+    cost_usd = Column(Numeric(12, 6), nullable=False, default=0)
+    created_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
 
